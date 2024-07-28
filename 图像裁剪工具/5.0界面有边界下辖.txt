@@ -1,0 +1,152 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk, ImageDraw
+import numpy as np
+import cv2
+
+
+class ImageCroppingApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("图像裁剪工具")
+
+        self.canvas = tk.Canvas(root, cursor="cross")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        self.frame = tk.Frame(root)
+        self.frame.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.load_button = tk.Button(self.frame, text="加载图像", command=self.load_image)
+        self.load_button.pack(side=tk.LEFT)
+
+        self.save_button = tk.Button(self.frame, text="保存裁剪图像", command=self.save_image, state=tk.DISABLED)
+        self.save_button.pack(side=tk.LEFT)
+
+        self.shape_var = tk.StringVar(value="矩形")
+        self.shape_menu = tk.OptionMenu(self.frame, self.shape_var, "矩形", "圆形", "心形")
+        self.shape_menu.pack(side=tk.LEFT)
+
+        self.clear_button = tk.Button(self.frame, text="清除选择", command=self.clear_selection, state=tk.DISABLED)
+        self.clear_button.pack(side=tk.LEFT)
+
+        self.scale_label = tk.Label(self.frame, text="比例:")
+        self.scale_label.pack(side=tk.LEFT)
+
+        self.scale_var = tk.DoubleVar(value=1.0)
+        self.scale_entry = tk.Entry(self.frame, textvariable=self.scale_var)
+        self.scale_entry.pack(side=tk.LEFT)
+
+        self.output_width_label = tk.Label(self.frame, text="输出宽度:")
+        self.output_width_label.pack(side=tk.LEFT)
+
+        self.output_width_var = tk.IntVar(value=100)
+        self.output_width_entry = tk.Entry(self.frame, textvariable=self.output_width_var)
+        self.output_width_entry.pack(side=tk.LEFT)
+
+        self.output_height_label = tk.Label(self.frame, text="输出高度:")
+        self.output_height_label.pack(side=tk.LEFT)
+
+        self.output_height_var = tk.IntVar(value=100)
+        self.output_height_entry = tk.Entry(self.frame, textvariable=self.output_height_var)
+        self.output_height_entry.pack(side=tk.LEFT)
+
+        self.image = None
+        self.rect = None
+        self.start_x = None
+        self.start_y = None
+
+        self.canvas.bind("<ButtonPress-1>", self.on_button_press)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
+
+    def load_image(self):
+        file_path = filedialog.askopenfilename(filetypes=[
+            ("Image files", "*.jpg *.jpeg *.png *.bmp *.gif *.tiff"),
+            ("All files", "*.*")
+        ])
+        if file_path:
+            self.image = Image.open(file_path)
+            self.image_tk = ImageTk.PhotoImage(self.image)
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image_tk)
+            
+            img_width, img_height = self.image.size
+            new_width = max(img_width, 200)
+            new_height = max(img_height, 200)
+            self.canvas.config(width=new_width, height=new_height)
+            self.root.geometry(f"{new_width}x{new_height + 100}")
+
+            self.save_button.config(state=tk.NORMAL)
+            self.clear_button.config(state=tk.NORMAL)
+
+    def save_image(self):
+        if self.rect:
+            x0, y0, x1, y1 = self.canvas.coords(self.rect)
+            x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+            cropped_image = self.image.crop((x0, y0, x1, y1))
+
+            output_width = self.output_width_var.get()
+            output_height = self.output_height_var.get()
+            cropped_image = cropped_image.resize((output_width, output_height), Image.LANCZOS)
+
+            shape = self.shape_var.get()
+            if shape == "圆形":
+                cropped_image = self.apply_circle_mask(cropped_image)
+            elif shape == "心形":
+                cropped_image = self.apply_heart_mask(cropped_image)
+
+            file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[
+                ("PNG files", "*.png"),
+                ("All files", "*.*")
+            ])
+            if file_path:
+                cropped_image.save(file_path)
+                messagebox.showinfo("图像已保存", f"图像已保存到 {file_path}")
+
+    def clear_selection(self):
+        if self.rect:
+            self.canvas.delete(self.rect)
+            self.rect = None
+
+    def on_button_press(self, event):
+        self.start_x = event.x
+        self.start_y = event.y
+        if self.rect:
+            self.canvas.delete(self.rect)
+        self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline='red')
+
+    def on_mouse_drag(self, event):
+        cur_x, cur_y = (event.x, event.y)
+        self.canvas.coords(self.rect, self.start_x, self.start_y, cur_x, cur_y)
+
+    def on_button_release(self, event):
+        pass
+
+    def apply_circle_mask(self, image):
+        np_image = np.array(image)
+        h, w = np_image.shape[:2]
+        alpha = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(alpha, (w // 2, h // 2), min(w, h) // 2, (255), -1)
+        np_image = cv2.merge((np_image, alpha))
+        return Image.fromarray(np_image)
+
+    def apply_heart_mask(self, image):
+        np_image = np.array(image)
+        h, w = np_image.shape[:2]
+        alpha = np.zeros((h, w), dtype=np.uint8)
+
+        heart_points = [
+            (w // 2, int(h * 0.8)),
+            (int(w * 0.1), int(h * 0.4)),
+            (w // 2, 0),
+            (int(w * 0.9), int(h * 0.4))
+        ]
+        cv2.fillPoly(alpha, [np.array(heart_points, dtype=np.int32)], (255))
+
+        np_image = cv2.merge((np_image, alpha))
+        return Image.fromarray(np_image)
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ImageCroppingApp(root)
+    root.mainloop()
